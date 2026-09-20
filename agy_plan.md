@@ -1,135 +1,110 @@
-# Implementation Plan: Exponent Label, Log Contrast, Tick Lines, and Delta (Max - Min) Sliders
+# Implementation Plan: URL Query Parameter Support for GitHub Pages
 
 **File**: `agy_plan.md`  
 **Workspace**: `/Users/alex/Documents/Teaching/3013_PerceptualSystems/gratingsVibeCoded`  
-**Rule Compliance**: Saved in workspace with `agy` and `plan` in filename; substantive parameters in `config.js`.
+**Rule Compliance**: Saved in workspace with `agy` and `plan` in filename; substantive parameters and parameter mappings in `config.js`.
 
 ---
 
 ## 1. Goal Description
 
-Implement five key improvements to the grating psychophysics interface:
-1. **Gamma Label Update**: Rename the gamma slider label to `RGB->luminance exponent (gamma)`.
-2. **Contrast Spacing Dropdown**: Add a dropdown menu for contrast gradient spacing with options `Linear` (default) and `Logarithmic`.
-3. **Always Include 0.00 Contrast Label**: Ensure that a `0.00` contrast label is always displayed at the exact vertical position where contrast reaches zero, regardless of collision skipping. In logarithmic mode, the top strip transitions to exact zero (with intermediate strips log-spaced) so `0.00` is explicitly anchored at the top.
-4. **Tick Marks Extending Toward Gratings**: For every rendered contrast label in the right-side blank grey strip, draw a distinct black tick line (e.g. 8–12 physical pixels long) at that vertical position, extending from the text leftward toward the grating.
-5. **Delta (Max − Min) Sliders**:
-   - Replace the *Max Spatial Frequency* slider with a **Spatial Freq Range (Max − Min)** slider (range $0\text{ to }25\text{ cpd}$). When set to $0$, maximum spatial frequency equals minimum spatial frequency (uniform across $x$).
-   - Replace the *Max Temporal Frequency* slider with a **Temporal Freq Range (Max − Min)** slider (range $0\text{ to }50\text{ Hz}$). When set to $0$, maximum temporal frequency equals minimum temporal frequency (uniform across $x$).
+Add URL query parameter support (`?param=value&...`) so that any configuration of sliders and dropdowns can be loaded directly from a URL (e.g. for GitHub Pages deployment: `https://<username>.github.io/gratingsVibeCoded/?minSpatialFreqCpd=0.1&contrastScale=logarithmic`).
+
+Additionally:
+- Live-update the browser URL bar using `history.replaceState` as sliders and dropdowns change, allowing instant sharing of the current stimulus state.
+- Add a "Copy Shareable Link" button in the sidebar for one-click sharing.
+- Support both exact parameter names and convenient short aliases (case-insensitive) for ease of manual URL crafting.
 
 ---
 
-## 2. Technical & Mathematical Design
+## 2. Technical & Architecture Design
 
-### 2.1 Slider Parameterization: Min & Delta (Max − Min)
-Instead of independent $(f_{\min}, f_{\max})$ controls where user error could set $f_{\max} < f_{\min}$:
-- **Spatial Frequency**:
-  - Slider 1: `minSpatialFreqCpd` ($f_{s,\min} \in [0.1, 15.0]\text{ cpd}$)
-  - Slider 2: `deltaSpatialFreqCpd` ($\Delta f_s \in [0.0, 25.0]\text{ cpd}$)
-  - Derived: $f_{s,\max} = f_{s,\min} + \Delta f_s$.
-  - When $\Delta f_s = 0$: $f_{s,\max} = f_{s,\min}$ (grating has identical spatial frequency across all $x$).
-  - Bottom strip SF labels automatically disappear when $\Delta f_s < 0.01$.
-- **Temporal Frequency**:
-  - Slider 1: `minTemporalFreq` ($f_{t,\min} \in [0.0, 50.0]\text{ Hz}$)
-  - Slider 2: `deltaTemporalFreq` ($\Delta f_t \in [0.0, 50.0]\text{ Hz}$)
-  - Derived: $f_{t,\max} = f_{t,\min} + \Delta f_t$.
-  - When $\Delta f_t = 0$: $f_{t,\max} = f_{t,\min}$ (uniform temporal flicker rate across all $x$).
-  - When $f_{t,\min} = 0$ and $\Delta f_t = 0$: entirely static.
-  - Bottom strip TF labels automatically disappear when $\Delta f_t < 0.01$.
+### 2.1 Supported Parameters and Aliases
 
----
+Every interactive control will be configurable via URL query parameters:
 
-### 2.2 Contrast Spacing Formulation & Guaranteed 0.00 Label
+| Parameter Key | Controls | Type / Allowed Values | Aliases Accepted |
+| :--- | :--- | :--- | :--- |
+| `stripHeight` | Strip thickness (px) | Integer ($1\text{ to }40$) | `strip_height`, `sh`, `strip` |
+| `maxContrast` | Bottom strip contrast | Float ($0.0\text{ to }1.0$) | `max_contrast`, `contrast`, `c` |
+| `contrastScale` | Contrast spacing | `'linear'`, `'logarithmic'` | `contrast_scale`, `c_scale` |
+| `minSpatialFreqCpd` | Min spatial freq (cpd) | Float ($0.03\text{ to }15.0$) | `min_sf`, `minsf`, `sf_min` |
+| `deltaSpatialFreqCpd` | Spatial freq range (cpd) | Float ($0.0\text{ to }25.0$) | `delta_sf`, `sf_range`, `sf_delta`, `max_sf`* |
+| `spatialFreqScale` | Spatial spacing | `'linear'`, `'logarithmic'` | `sf_scale`, `spatial_scale` |
+| `viewingDistanceCm` | Viewing distance (cm) | Integer/Float ($20\text{ to }80$) | `viewing_distance`, `dist`, `distance` |
+| `gratingWidthCm` | Grating width (cm) | Integer/Float ($5\text{ to }60$) | `grating_width`, `width`, `w` |
+| `minTemporalFreq` | Min temporal freq (Hz) | Float ($0.0\text{ to }50.0$) | `min_tf`, `mintf`, `tf_min` |
+| `deltaTemporalFreq` | Temporal freq range (Hz) | Float ($0.0\text{ to }50.0$) | `delta_tf`, `tf_range`, `tf_delta`, `max_tf`* |
+| `temporalFreqScale` | Temporal spacing | `'linear'`, `'logarithmic'` | `tf_scale`, `temporal_scale` |
+| `gamma` | RGB->luminance exponent | Float ($1.0\text{ to }2.6$) | `exponent`, `g` |
 
-Let $N = \lceil H_{\text{grating}} / S \rceil$ strips, where strip $k = 0$ is at the bottom and $k = N - 1$ is at the top.
-Normalized height fraction: $\alpha_k = \frac{k}{N - 1} \in [0, 1]$.
-
-#### Linear Spacing (`linear`):
-$$\text{Contrast}_k = \max\left(0,\; \text{maxContrast} \cdot (1 - \alpha_k)\right)$$
-- At bottom ($k = 0$): $\text{Contrast} = \text{maxContrast}$.
-- At top ($k = N - 1$): $\text{Contrast} = 0.00$.
-
-#### Logarithmic Spacing (`logarithmic`):
-To accommodate psychophysical log scaling while honoring the rule:
-*"Always include a 0.00 contrast label where the contrast becomes exactly zero"*
-- Bottom strip ($k = 0$): $\text{Contrast}_0 = \text{maxContrast}$.
-- Top strip ($k = N - 1$): $\text{Contrast}_{N-1} = 0.00$ (exact zero, matching human infinite threshold / zero visibility).
-- Intermediate strips ($1 \le k \le N - 2$): Logarithmically spaced from $\text{maxContrast}$ down to $C_{\min}$ (e.g. $0.005$):
-  $$\text{Contrast}_k = \text{maxContrast} \cdot \left(\frac{C_{\min}}{\text{maxContrast}}\right)^{\frac{k}{N - 2}}$$
-  This produces smooth logarithmic decay across all visible strips and terminates cleanly in an exact $0.00$ top strip.
-
-#### Guaranteed 0.00 Label:
-In `drawRightContrastLabels()`:
-- Strip $k = N - 1$ (where contrast is $0.00$) is always unconditionally flagged for display.
-- Other labels are drawn downward from top or upward from bottom, suppressing any that fall within $2 \times \text{lineHeight}$ of an already accepted label.
-- The `0.00` label is guaranteed to be rendered with its black tick line.
+*(Note: If a user specifies `max_sf` instead of `delta_sf`, $\Delta f_s$ is automatically calculated as $\max(0, \text{max\_sf} - f_{s,\min})$. The same applies to `max_tf`).*
 
 ---
 
-### 2.3 Black Tick Lines Extending from Text Toward Gratings
+### 2.2 Lifecycle & Synchronization Flow
 
-On the right blank grey strip (background RGB 186):
-- Grating area boundary is at $X_{\text{boundary}} = \text{gratingPhysW}$.
-- Label text is rendered in white (`#ffffff`) at $X_{\text{text}} \approx X_{\text{boundary}} + 28\cdot\text{dpr}$.
-- For every rendered label at vertical center $Y$:
-  - A black horizontal line (`#000000`, width $1.5\cdot\text{dpr}$ physical px) is drawn extending toward the grating:
-    - Starts near the left of the text: $X_{\text{start}} = X_{\text{text}} - 14\cdot\text{dpr}$.
-    - Extends leftward to: $X_{\text{end}} = X_{\text{boundary}} + 2\cdot\text{dpr}$.
-  - Length of line: ~12 physical pixels (proportional to display DPI).
-  - Clean visual pointer directly connecting each contrast value to its corresponding strip.
+```mermaid
+flowchart TD
+    A[Page Loaded on GitHub Pages / Local] --> B[Read window.location.search via URLSearchParams]
+    B --> C{Are params present?}
+    C -- Yes --> D[Parse & Validate each param against config limits]
+    D --> E[Override default state with URL params]
+    C -- No --> F[Use defaults from config.js]
+    E --> G[Initialize Slider & Dropdown DOM elements]
+    F --> G
+    G --> H[Render Grating Canvas]
+    H --> I[User moves slider or changes dropdown]
+    I --> J[Update state & re-render canvas]
+    J --> K[Update browser address bar via history.replaceState]
+    K --> L[Click 'Copy Shareable Link' to copy URL to clipboard]
+```
 
----
+1. **On Initialization (`init`)**:
+   - Create a `URLSearchParams` parser reading `window.location.search`.
+   - Iterate over all parameter definitions.
+   - If present in the URL:
+     - Parse type (float, int, or lowercase string for dropdowns).
+     - Clamp numerical values to `[min, max]` defined in `CONFIG.sliderDefs` to ensure safety against invalid input.
+     - Validate dropdown choices against `['linear', 'logarithmic']`.
+     - Assign to `state[key]`.
+   - Update DOM slider positions and live value labels.
+   - Render the initial grating.
 
-### 2.4 Gamma Slider Label
-Update label text in HTML:
-- From: `Gamma (γ)`
-- To: `RGB->luminance exponent (gamma)`
+2. **Live URL Syncing (`updateURL`)**:
+   - Whenever any slider or dropdown changes:
+     - Construct a new `URLSearchParams` object containing keys that deviate from defaults (or all keys for full explicitness).
+     - Update the browser URL without reloading using `history.replaceState(null, '', '?' + params.toString())`.
+     - Clicking browser bookmarks or copying the URL bar directly captures the exact state.
+
+3. **"Copy Shareable Link" Button**:
+   - Located in the sidebar below the controls.
+   - Copies `window.location.href` to clipboard with brief visual feedback (`"Copied!"` badge/tooltip).
+
+4. **Reset Button**:
+   - Restores all parameters to `CONFIG` defaults.
+   - Clears query parameters from URL via `history.replaceState(null, '', window.location.pathname)`.
 
 ---
 
 ## 3. Configuration Updates (`config.js`)
 
+Centralize parameter metadata and query aliases in `config.js`:
 ```javascript
-const CONFIG = {
-  // Photometry
-  lMin: 1.0,
-  lMax: 300.0,
-  vMid: 186,
-  gamma: 2.20,
-
-  // Geometry
-  stripHeight: 20,
-  maxContrast: 1.00,
-  contrastScale: 'linear',  // 'linear' or 'logarithmic'
-  minLogContrast: 0.005,    // Floor contrast for log scale
-
-  rightMarginWidth: 70,
-  bottomMarginHeight: 42,
-
-  // Viewing geometry
-  viewingDistanceCm: 57.0,
-  gratingWidthCm: 30.0,
-
-  // Spatial frequency (cpd)
-  minSpatialFreqCpd: 0.5,
-  deltaSpatialFreqCpd: 14.5, // max - min (max = min + delta = 15.0 cpd)
-
-  // Temporal frequency (Hz)
-  minTemporalFreq: 0.0,
-  deltaTemporalFreq: 0.0,   // max - min (max = min + delta = 0.0 Hz)
-
-  // Slider bounds & definitions
-  sliderDefs: {
-    stripHeight:         { min: 1,   max: 40,  step: 1,    unit: 'px' },
-    maxContrast:         { min: 0.0, max: 1.0, step: 0.01, unit: '' },
-    minSpatialFreqCpd:   { min: 0.1, max: 15,  step: 0.1,  unit: 'cpd' },
-    deltaSpatialFreqCpd: { min: 0.0, max: 25,  step: 0.5,  unit: 'cpd' },
-    viewingDistanceCm:   { min: 20,  max: 80,  step: 1,    unit: 'cm' },
-    gratingWidthCm:      { min: 5,   max: 60,  step: 1,    unit: 'cm' },
-    minTemporalFreq:     { min: 0.0, max: 50,  step: 0.5,  unit: 'Hz' },
-    deltaTemporalFreq:   { min: 0.0, max: 50,  step: 0.5,  unit: 'Hz' },
-    gamma:               { min: 1.0, max: 2.6, step: 0.05, unit: '' }
-  }
+// Parameter aliases mapping for URL query strings
+CONFIG.paramAliases = {
+  stripHeight:         ['stripheight', 'strip_height', 'sh', 'strip'],
+  maxContrast:         ['maxcontrast', 'max_contrast', 'contrast', 'c'],
+  contrastScale:       ['contrastscale', 'contrast_scale', 'c_scale'],
+  minSpatialFreqCpd:   ['minspatialfreqcpd', 'min_sf', 'minsf', 'sf_min'],
+  deltaSpatialFreqCpd: ['deltaspatialfreqcpd', 'delta_sf', 'sf_range', 'sf_delta'],
+  spatialFreqScale:    ['spatialfreqscale', 'sf_scale', 'spatial_scale'],
+  viewingDistanceCm:   ['viewingdistancecm', 'viewing_distance', 'dist', 'distance'],
+  gratingWidthCm:      ['gratingwidthcm', 'grating_width', 'width', 'w'],
+  minTemporalFreq:     ['mintemporalfreq', 'min_tf', 'mintf', 'tf_min'],
+  deltaTemporalFreq:   ['deltatemporalfreq', 'delta_tf', 'tf_range', 'tf_delta'],
+  temporalFreqScale:   ['temporalfreqscale', 'tf_scale', 'temporal_scale'],
+  gamma:               ['gamma', 'exponent', 'g']
 };
 ```
 
@@ -138,45 +113,41 @@ const CONFIG = {
 ## 4. Proposed File Changes
 
 ### [MODIFY] `config.js`
-- Add `contrastScale`, `minLogContrast`.
-- Replace `maxSpatialFreqCpd` with `deltaSpatialFreqCpd`.
-- Replace `maxTemporalFreq` with `deltaTemporalFreq`.
+- Add `CONFIG.paramAliases`.
 
 ### [MODIFY] `index.html`
-- Add `<select id="contrastScale">` dropdown beneath `maxContrast`.
-- Change `maxSpatialFreqCpd` slider to `deltaSpatialFreqCpd` with label `Spatial Freq Range (Max − Min)`.
-- Change `maxTemporalFreq` slider to `deltaTemporalFreq` with label `Temporal Freq Range (Max − Min)`.
-- Update gamma slider label to `RGB->luminance exponent (gamma)`.
+- Add a "Copy Shareable Link" button (`<button id="copyUrlBtn">`) next to the Reset button in the sidebar.
 
 ### [MODIFY] `style.css`
-- Add dark-theme styles for `<select id="contrastScale">`.
+- Add styling for the button group (`#resetBtn` and `#copyUrlBtn`), including subtle hover effects and active state.
 
 ### [MODIFY] `script.js`
-- Compute $f_{s,\max} = f_{s,\min} + \Delta f_s$ and $f_{t,\max} = f_{t,\min} + \Delta f_t$.
-- Compute strip contrasts according to `linear` or `logarithmic` mode.
-- Render white contrast labels on right blank grey strip with:
-  - Guaranteed `0.00` label at the top.
-  - Black tick lines extending from the text toward the grating area.
-- Bottom strip frequency labels show spatial frequency only if $\Delta f_s > 0.05$, and temporal frequency only if $\Delta f_t > 0.05$.
+- Implement `parseURLParams()`: Reads `window.location.search`, resolves aliases, validates bounds, and populates `state`.
+- Implement `updateURL()`: Serializes active `state` to `history.replaceState`.
+- Add event listener for `#copyUrlBtn` with clipboard API and visual feedback.
+- Update reset handler to clear URL query parameters.
 
 ---
 
 ## 5. Verification Plan
 
-1. **Gamma Slider Label**:
-   - Verify label displays `RGB->luminance exponent (gamma)`.
-2. **Contrast Scale Dropdown**:
-   - Verify dropdown defaults to `Linear`.
-   - Switch to `Logarithmic`: verify intermediate strips drop off multiplicatively while top strip remains exactly `0.00`.
-3. **0.00 Label & Black Tick Lines**:
-   - Verify `0.00` is always present at the top.
-   - Verify every contrast label has a crisp black line extending from its left toward the grating.
-4. **Max − Min Delta Sliders**:
-   - Set `Spatial Freq Range (Max − Min)` to `0.0 cpd`:
-     - Verify spatial frequency is uniform across entire width.
-     - Verify bottom axis SF labels disappear.
-   - Increase delta slider: verify chirp gradient appears and bottom SF labels display min through max.
-   - Set `Temporal Freq Range (Max − Min)` to `0.0 Hz`:
-     - If min is 0: verify animation stops.
-     - If min is >0: verify uniform counterphase across entire width and bottom TF labels disappear.
-     - If delta > 0: verify temporal gradient and bottom TF labels appear.
+### Automated / Syntax Tests
+- Run JXA syntax validation for `config.js` and `script.js`.
+- Test URL query parser logic against a variety of URL strings using a test harness in Python or JXA.
+
+### Manual In-Browser Verification
+1. **Direct Parameter Loading**:
+   - Open: `index.html?maxContrast=0.5&minSpatialFreqCpd=0.2&deltaSpatialFreqCpd=4.0&contrastScale=logarithmic`
+   - Verify all corresponding sliders and dropdowns initialize to those values, and the grating reflects them immediately.
+2. **Alias Support**:
+   - Open: `index.html?contrast=0.7&min_sf=0.1&dist=45&sf_scale=logarithmic`
+   - Verify aliases correctly map to `maxContrast`, `minSpatialFreqCpd`, `viewingDistanceCm`, and `spatialFreqScale`.
+3. **Safety / Bounds Clamping**:
+   - Open: `index.html?stripHeight=999&maxContrast=-5&gamma=10`
+   - Verify values are safely clamped to their defined slider ranges ($1\text{--}40$, $0.0\text{--}1.0$, $1.0\text{--}2.6$).
+4. **Live URL Sync**:
+   - Move any slider: verify the URL in the browser address bar updates live without page reloading.
+5. **Copy Link Button**:
+   - Click "Copy Shareable Link": verify URL is copied to clipboard and opens identically in a new browser tab.
+6. **Reset Button**:
+   - Click "Reset to Defaults": verify sliders return to defaults and query string is cleared from the address bar.

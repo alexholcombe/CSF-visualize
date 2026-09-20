@@ -17,6 +17,117 @@ const state = {
   gamma:               CONFIG.gamma
 };
 
+// ── URL Query Parameter Parsing & Synchronization ─────────────────────────────
+/**
+ * Reads URL query parameters (e.g. from GitHub Pages) and overrides state
+ */
+function parseURLParams() {
+  if (!window.location.search) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const defs = CONFIG.sliderDefs;
+  const aliases = CONFIG.paramAliases || {};
+
+  // Helper to find param value case-insensitively across canonical key and aliases
+  const getParamVal = (key) => {
+    if (params.has(key)) return params.get(key);
+    const keyLower = key.toLowerCase();
+    for (const [pKey, pVal] of params.entries()) {
+      if (pKey.toLowerCase() === keyLower) return pVal;
+    }
+    const aliasList = aliases[key] || [];
+    for (const alias of aliasList) {
+      for (const [pKey, pVal] of params.entries()) {
+        if (pKey.toLowerCase() === alias.toLowerCase()) return pVal;
+      }
+    }
+    return null;
+  };
+
+  // 1. Slider Parameters
+  const sliderKeys = [
+    { key: 'stripHeight',         parse: parseInt },
+    { key: 'maxContrast',         parse: parseFloat },
+    { key: 'minSpatialFreqCpd',   parse: parseFloat },
+    { key: 'deltaSpatialFreqCpd', parse: parseFloat },
+    { key: 'viewingDistanceCm',   parse: parseInt },
+    { key: 'gratingWidthCm',      parse: parseInt },
+    { key: 'minTemporalFreq',     parse: parseFloat },
+    { key: 'deltaTemporalFreq',   parse: parseFloat },
+    { key: 'gamma',               parse: parseFloat }
+  ];
+
+  sliderKeys.forEach(({ key, parse }) => {
+    const rawVal = getParamVal(key);
+    if (rawVal !== null) {
+      const num = parse(rawVal);
+      if (!isNaN(num)) {
+        const def = defs[key];
+        // Safely clamp within slider bounds
+        state[key] = Math.max(def.min, Math.min(def.max, num));
+      }
+    }
+  });
+
+  // Convenience: allow max_sf or max_tf in URL to derive delta
+  const rawMaxSF = params.get('max_sf') || params.get('maxsf');
+  if (rawMaxSF !== null && !getParamVal('deltaSpatialFreqCpd')) {
+    const maxSF = parseFloat(rawMaxSF);
+    if (!isNaN(maxSF)) {
+      state.deltaSpatialFreqCpd = Math.max(0, Math.min(defs.deltaSpatialFreqCpd.max, maxSF - state.minSpatialFreqCpd));
+    }
+  }
+
+  const rawMaxTF = params.get('max_tf') || params.get('maxtf');
+  if (rawMaxTF !== null && !getParamVal('deltaTemporalFreq')) {
+    const maxTF = parseFloat(rawMaxTF);
+    if (!isNaN(maxTF)) {
+      state.deltaTemporalFreq = Math.max(0, Math.min(defs.deltaTemporalFreq.max, maxTF - state.minTemporalFreq));
+    }
+  }
+
+  // 2. Dropdown Scale Parameters
+  const scaleKeys = ['contrastScale', 'spatialFreqScale', 'temporalFreqScale'];
+  scaleKeys.forEach(key => {
+    const rawVal = getParamVal(key);
+    if (rawVal) {
+      const valLower = rawVal.toLowerCase().trim();
+      if (valLower === 'log' || valLower === 'logarithmic') {
+        state[key] = 'logarithmic';
+      } else if (valLower === 'lin' || valLower === 'linear') {
+        state[key] = 'linear';
+      }
+    }
+  });
+}
+
+/**
+ * Updates URL search string in the browser address bar without reloading
+ */
+function updateURL() {
+  if (!window.history || !window.history.replaceState) return;
+
+  try {
+    const params = new URLSearchParams();
+    const keys = [
+      'stripHeight', 'maxContrast', 'contrastScale',
+      'minSpatialFreqCpd', 'deltaSpatialFreqCpd', 'spatialFreqScale',
+      'viewingDistanceCm', 'gratingWidthCm',
+      'minTemporalFreq', 'deltaTemporalFreq', 'temporalFreqScale',
+      'gamma'
+    ];
+
+    keys.forEach(k => {
+      params.set(k, state[k]);
+    });
+
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, '', newUrl);
+  } catch (e) {
+    // Gracefully ignore DOMException/SecurityError on local file:// URLs in some browsers
+  }
+}
+
 // ── Canvas Setup ──────────────────────────────────────────────────────────────
 const canvas = document.getElementById('gratingCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: false });
@@ -109,14 +220,11 @@ function renderGrating(tSec) {
   // Integrated spatial phase: Linear vs Logarithmic chirp
   const isSpatialChirp = state.deltaSpatialFreqCpd > 0.0001;
   if (!isSpatialChirp) {
-    // Uniform spatial frequency across width
     const twoPiF0 = 2 * Math.PI * fPxMin;
     for (let x = 0; x < gratingPhysW; x++) {
       sinChirp[x] = Math.sin(twoPiF0 * x);
     }
   } else if (state.spatialFreqScale === 'logarithmic') {
-    // Logarithmic chirp: f(x) = f0 * (f1 / f0)^(x / W)
-    // Phi(x) = 2*PI * f0 * W / ln(f1 / f0) * [ (f1 / f0)^(x / W) - 1 ]
     const kRatio = fPxMax / fPxMin;
     const lnK = Math.log(kRatio);
     const coeff = (2 * Math.PI * fPxMin * gratingPhysW) / lnK;
@@ -125,8 +233,6 @@ function renderGrating(tSec) {
       sinChirp[x] = Math.sin(phase);
     }
   } else {
-    // Linear chirp: f(x) = f0 + (f1 - f0) * (x / W)
-    // Phi(x) = 2*PI * [ f0 * x + (f1 - f0) * x^2 / (2 * W) ]
     const deltaF_px = (fPxMax - fPxMin) / (2.0 * gratingPhysW);
     for (let x = 0; x < gratingPhysW; x++) {
       const phase = 2 * Math.PI * (fPxMin * x + deltaF_px * x * x);
@@ -139,11 +245,9 @@ function renderGrating(tSec) {
   if (!isTemporalActive) {
     temporalFactor.fill(1.0);
   } else if (state.deltaTemporalFreq <= 0.0001) {
-    // Uniform temporal frequency across width
     const factor = Math.cos(2 * Math.PI * state.minTemporalFreq * tSec);
     temporalFactor.fill(factor);
   } else if (state.temporalFreqScale === 'logarithmic') {
-    // Logarithmic temporal frequency
     const f0 = state.minTemporalFreq;
     const f1 = maxTemporalFreq;
     if (f0 > 0.01) {
@@ -153,17 +257,15 @@ function renderGrating(tSec) {
         temporalFactor[x] = Math.cos(2 * Math.PI * localTF * tSec);
       }
     } else {
-      // When min temporal freq is 0: floor to minLogTemporalFreq for x > 0
       const floorTF = Math.min(CONFIG.minLogTemporalFreq, f1);
       const kRatioTF = f1 / floorTF;
-      temporalFactor[0] = 1.0; // 0 Hz -> static
+      temporalFactor[0] = 1.0;
       for (let x = 1; x < gratingPhysW; x++) {
         const localTF = floorTF * Math.pow(kRatioTF, x / gratingPhysW);
         temporalFactor[x] = Math.cos(2 * Math.PI * localTF * tSec);
       }
     }
   } else {
-    // Linear temporal frequency
     const deltaTF = state.deltaTemporalFreq / gratingPhysW;
     for (let x = 0; x < gratingPhysW; x++) {
       const localTF = state.minTemporalFreq + deltaTF * x;
@@ -189,14 +291,11 @@ function renderGrating(tSec) {
     // Calculate strip contrast
     let stripContrast = 0;
     if (k === numStrips - 1) {
-      // Top strip is always exactly 0.00 contrast
       stripContrast = 0.00;
     } else if (k === 0) {
-      // Bottom strip is maxContrast
       stripContrast = state.maxContrast;
     } else {
       if (state.contrastScale === 'logarithmic') {
-        // Logarithmic spacing from maxContrast down to minLogContrast
         if (numStrips > 2 && state.maxContrast > 0) {
           const minC = Math.min(CONFIG.minLogContrast, state.maxContrast);
           const alpha = k / (numStrips - 2);
@@ -205,7 +304,6 @@ function renderGrating(tSec) {
           stripContrast = 0;
         }
       } else {
-        // Linear spacing
         const step = state.maxContrast / (numStrips - 1);
         stripContrast = Math.max(0, state.maxContrast - k * step);
       }
@@ -480,6 +578,7 @@ function setupSliders() {
       display.textContent = fmt(state[key]);
       updateInfo();
       updateAnimationState();
+      updateURL();
     });
   });
 
@@ -491,6 +590,7 @@ function setupSliders() {
       state[key] = select.value;
       updateInfo();
       updateAnimationState();
+      updateURL();
     });
     return select;
   };
@@ -498,6 +598,34 @@ function setupSliders() {
   const contrastSelect = setupSelect('contrastScale', 'contrastScale');
   const spatialSelect = setupSelect('spatialFreqScale', 'spatialFreqScale');
   const temporalSelect = setupSelect('temporalFreqScale', 'temporalFreqScale');
+
+  // Copy Shareable Link button
+  const copyBtn = document.getElementById('copyUrlBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      updateURL();
+      const currentUrl = window.location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(currentUrl).then(() => {
+          showCopySuccess();
+        }).catch(() => {
+          prompt('Copy this link:', currentUrl);
+        });
+      } else {
+        prompt('Copy this link:', currentUrl);
+      }
+    });
+
+    function showCopySuccess() {
+      const origText = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.textContent = origText;
+        copyBtn.classList.remove('copied');
+      }, 1800);
+    }
+  }
 
   // Reset button
   document.getElementById('resetBtn').addEventListener('click', () => {
@@ -517,6 +645,15 @@ function setupSliders() {
     state.temporalFreqScale = CONFIG.temporalFreqScale;
     temporalSelect.value = state.temporalFreqScale;
 
+    // Clear URL query parameters on reset
+    try {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    } catch (e) {
+      // Ignore on local file://
+    }
+
     updateInfo();
     updateAnimationState();
   });
@@ -524,6 +661,7 @@ function setupSliders() {
 
 // ── App Initialization ────────────────────────────────────────────────────────
 function init() {
+  parseURLParams();
   resizeCanvas();
   setupSliders();
   updateInfo();
@@ -538,4 +676,9 @@ function init() {
   });
 }
 
-window.addEventListener('DOMContentLoaded', init);
+// Ensure init() executes whether loaded before or after DOMContentLoaded
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
