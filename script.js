@@ -416,11 +416,18 @@ function drawRightContrastLabels(stripLabels, physW) {
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
 
+    // Format contrast value with enough decimals to never display as "0.000...".
+    // For small values (e.g. cMin ≈ 0.012) keep adding decimal places until
+    // the formatted string is not all zeros after the decimal point.
     let txt;
     if (item.contrast >= 0.10) {
       txt = item.contrast.toFixed(2);
     } else {
-      txt = item.contrast.toFixed(3);
+      let decimals = 3;
+      do {
+        txt = item.contrast.toFixed(decimals);
+        decimals++;
+      } while (parseFloat(txt) === 0 && decimals <= 8);
     }
 
     ctx.fillText(txt, textX, y);
