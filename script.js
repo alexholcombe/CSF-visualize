@@ -28,7 +28,6 @@ function parseURLParams() {
   const defs = CONFIG.sliderDefs;
   const aliases = CONFIG.paramAliases || {};
 
-  // Helper to find param value case-insensitively across canonical key and aliases
   const getParamVal = (key) => {
     if (params.has(key)) return params.get(key);
     const keyLower = key.toLowerCase();
@@ -63,13 +62,12 @@ function parseURLParams() {
       const num = parse(rawVal);
       if (!isNaN(num)) {
         const def = defs[key];
-        // Safely clamp within slider bounds
         state[key] = Math.max(def.min, Math.min(def.max, num));
       }
     }
   });
 
-  // Convenience: allow max_sf or max_tf in URL to derive delta
+  // Derived max_sf / max_tf aliases
   const rawMaxSF = params.get('max_sf') || params.get('maxsf');
   if (rawMaxSF !== null && !getParamVal('deltaSpatialFreqCpd')) {
     const maxSF = parseFloat(rawMaxSF);
@@ -124,7 +122,7 @@ function updateURL() {
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, '', newUrl);
   } catch (e) {
-    // Gracefully ignore DOMException/SecurityError on local file:// URLs in some browsers
+    // Gracefully ignore DOMException/SecurityError on local file:// URLs
   }
 }
 
@@ -155,6 +153,19 @@ let gratingPhysH = 0;
  */
 function getMidLuminance(gamma) {
   return CONFIG.lMin + (CONFIG.lMax - CONFIG.lMin) * Math.pow(CONFIG.vMid / 255, gamma);
+}
+
+/**
+ * Minimum non-zero Weber contrast imposed by integer RGB quantization.
+ * Modulating by ±1 integer level (peak=187, trough=185) around mid-grey (186):
+ * deltaL = (L(187) - L(185)) / 2
+ * cMin = deltaL / L(186)
+ */
+function getMinRGBContrast(gamma) {
+  const lMid = getMidLuminance(gamma);
+  const lPlus = CONFIG.lMin + (CONFIG.lMax - CONFIG.lMin) * Math.pow((CONFIG.vMid + 1) / 255, gamma);
+  const lMinus = CONFIG.lMin + (CONFIG.lMax - CONFIG.lMin) * Math.pow((CONFIG.vMid - 1) / 255, gamma);
+  return Math.max(0.0001, (lPlus - lMinus) / (2 * lMid));
 }
 
 /**
@@ -273,9 +284,11 @@ function renderGrating(tSec) {
     }
   }
 
-  // 3. Strip Distribution & Contrast Spacing (Linear vs Logarithmic)
+  // 3. Strip Distribution: Bottom strip = maxContrast, Top strip = min RGB contrast
   const stripH_phys = state.stripHeight * dpr;
   const numStrips = Math.ceil(gratingCssH / state.stripHeight);
+  const cMin = getMinRGBContrast(gamma);
+  const cMax = state.maxContrast;
 
   let currentBottomY_phys = gratingPhysH;
   const stripRowBuffer = new Uint32Array(gratingPhysW);
@@ -288,24 +301,22 @@ function renderGrating(tSec) {
 
     if (actualStripHeight <= 0) break;
 
-    // Calculate strip contrast
-    let stripContrast = 0;
-    if (k === numStrips - 1) {
-      stripContrast = 0.00;
+    // Calculate strip contrast:
+    // k=0 (bottom) is cMax.
+    // k=numStrips-1 (top) is cMin (minimum non-zero contrast imposed by integer RGB).
+    let stripContrast;
+    if (numStrips === 1 || cMax <= cMin) {
+      stripContrast = cMax;
     } else if (k === 0) {
-      stripContrast = state.maxContrast;
+      stripContrast = cMax;
+    } else if (k === numStrips - 1) {
+      stripContrast = cMin;
     } else {
+      const alpha = k / (numStrips - 1);
       if (state.contrastScale === 'logarithmic') {
-        if (numStrips > 2 && state.maxContrast > 0) {
-          const minC = Math.min(CONFIG.minLogContrast, state.maxContrast);
-          const alpha = k / (numStrips - 2);
-          stripContrast = state.maxContrast * Math.pow(minC / state.maxContrast, alpha);
-        } else {
-          stripContrast = 0;
-        }
+        stripContrast = cMax * Math.pow(cMin / cMax, alpha);
       } else {
-        const step = state.maxContrast / (numStrips - 1);
-        stripContrast = Math.max(0, state.maxContrast - k * step);
+        stripContrast = cMax - alpha * (cMax - cMin);
       }
     }
 
@@ -368,13 +379,13 @@ function drawRightContrastLabels(stripLabels, physW) {
   const textX = tickEndX + Math.round(6 * dpr);
 
   const minSeparation = fontSize * 2.2;
-  const topLabel = stripLabels[stripLabels.length - 1]; // Guaranteed 0.00 label
+  const topLabel = stripLabels[stripLabels.length - 1]; // Top strip with min non-zero contrast
 
   const labelsToDraw = [];
 
-  // Always include top 0.00 label
+  // Always include top strip label
   labelsToDraw.push({
-    contrast: 0.00,
+    contrast: topLabel.contrast,
     yCenter: topLabel.yCenter
   });
 
@@ -406,9 +417,7 @@ function drawRightContrastLabels(stripLabels, physW) {
     ctx.textAlign = 'left';
 
     let txt;
-    if (item.contrast === 0) {
-      txt = '0.00';
-    } else if (item.contrast >= 0.10) {
+    if (item.contrast >= 0.10) {
       txt = item.contrast.toFixed(2);
     } else {
       txt = item.contrast.toFixed(3);
@@ -523,25 +532,27 @@ function updateAnimationState() {
 // ── Info Card Readouts ────────────────────────────────────────────────────────
 function updateInfo() {
   const numStrips = Math.ceil(gratingCssH / state.stripHeight);
+  const cMin = getMinRGBContrast(state.gamma);
+  const cMax = state.maxContrast;
+  const topContrast = (cMax > cMin) ? cMin : cMax;
 
   document.getElementById('infoStripCount').textContent = numStrips;
-  document.getElementById('infoTopContrast').textContent = '0.00';
+  document.getElementById('infoTopContrast').textContent = topContrast.toFixed(3);
 
   const labelEl = document.getElementById('infoContrastLabel');
   const stepEl = document.getElementById('infoContrastStep');
 
   if (state.contrastScale === 'logarithmic') {
     labelEl.textContent = 'Contrast ratio (step):';
-    if (numStrips > 2 && state.maxContrast > 0) {
-      const minC = Math.min(CONFIG.minLogContrast, state.maxContrast);
-      const ratio = Math.pow(minC / state.maxContrast, 1 / (numStrips - 2));
+    if (numStrips > 1 && cMax > cMin) {
+      const ratio = Math.pow(cMin / cMax, 1 / (numStrips - 1));
       stepEl.textContent = `${ratio.toFixed(3)}x`;
     } else {
       stepEl.textContent = '-';
     }
   } else {
     labelEl.textContent = 'Contrast step (auto):';
-    const step = numStrips > 1 ? state.maxContrast / (numStrips - 1) : 0;
+    const step = (numStrips > 1 && cMax > cMin) ? (cMax - cMin) / (numStrips - 1) : 0;
     stepEl.textContent = step.toFixed(4);
   }
 }
@@ -645,7 +656,6 @@ function setupSliders() {
     state.temporalFreqScale = CONFIG.temporalFreqScale;
     temporalSelect.value = state.temporalFreqScale;
 
-    // Clear URL query parameters on reset
     try {
       if (window.history && window.history.replaceState) {
         window.history.replaceState(null, '', window.location.pathname);
