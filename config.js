@@ -34,16 +34,30 @@ const CONFIG = {
   temporalFreqScale: 'linear', // 'linear' or 'logarithmic'
   minLogTemporalFreq: 0.1,   // Floor for temporal log scaling when min is 0
 
+  // Refresh rate measurement & Nyquist limits
+  fpsProbeFrames: 40,            // Number of consecutive RAF frames to sample for refresh rate
+  fpsMinValidDeltaMs: 4.0,       // Minimum valid delta (reject duplicate callbacks < 250 Hz)
+  fpsMaxValidDeltaMs: 45.0,      // Maximum valid delta (reject tab-switch stalls > 22 Hz)
+  snapStandardFps: true,         // Snap within ±3% to standard refresh rates
+  standardFpsList: [60, 75, 90, 120, 144, 165, 240], // Common display refresh rates
+  defaultFallbackFps: 60.0,      // Default fallback before probe completes
+  clampTemporalToNyquist: true,  // Automatically clamp slider max to measured Nyquist limit (R/2)
+
+  // Temporal quantization & strip width
+  temporalStripWidth: 20,       // Width in CSS pixels of each constant temporal frequency vertical strip (1 to 100)
+  supportedFrameDivisors: [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 20, 24, 30, 40, 60, 120], // N frames per cycle
+
   // Slider range bounds and steps
   sliderDefs: {
     stripHeight:         { min: 1,    max: 40,  step: 1,    unit: 'px' },
     maxContrast:         { min: 0.0,  max: 1.0, step: 0.01, unit: '' },
     minSpatialFreqCpd:   { min: 0.03, max: 15,  step: 0.01, unit: 'cpd' },
     deltaSpatialFreqCpd: { min: 0.0,  max: 25,  step: 0.1,  unit: 'cpd' },
-    viewingDistanceCm:   { min: 20,   max: 80,  step: 1,    unit: 'cm' },
+    viewingDistanceCm:   { min: 20,   max: 200,  step: 1,    unit: 'cm' },
     gratingWidthCm:      { min: 5,    max: 60,  step: 1,    unit: 'cm' },
     minTemporalFreq:     { min: 0.0,  max: 50,  step: 0.5,  unit: 'Hz' },
     deltaTemporalFreq:   { min: 0.0,  max: 50,  step: 0.5,  unit: 'Hz' },
+    temporalStripWidth:  { min: 1,    max: 100, step: 1,    unit: 'px' },
     gamma:               { min: 1.0,  max: 2.6, step: 0.05, unit: '' }
   },
 
@@ -60,6 +74,7 @@ const CONFIG = {
     minTemporalFreq:     ['mintemporalfreq', 'min_tf', 'mintf', 'tf_min'],
     deltaTemporalFreq:   ['deltatemporalfreq', 'delta_tf', 'tf_range', 'tf_delta'],
     temporalFreqScale:   ['temporalfreqscale', 'tf_scale', 'temporal_scale'],
+    temporalStripWidth:  ['temporalstripwidth', 'tf_strip_width', 'tf_width', 'band_width', 'bw'],
     gamma:               ['gamma', 'exponent', 'g']
   }
 };

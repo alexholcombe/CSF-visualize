@@ -115,6 +115,14 @@
       </select>
     </div>
 
+    <div class="control-group">
+      <label for="temporalStripWidth">
+        <span class="label-text">Temporal Strip Width</span>
+        <span class="val-text" id="temporalStripWidthVal">20 px</span>
+      </label>
+      <input type="range" id="temporalStripWidth" />
+    </div>
+
     <hr class="divider" />
 
     <!-- Monitor Gamma / Exponent -->
@@ -139,6 +147,18 @@
       <div class="info-row">
         <span id="infoContrastLabel">Contrast step (auto):</span>
         <strong id="infoContrastStep">-</strong>
+      </div>
+      <div class="info-row">
+        <span>Display refresh rate:</span>
+        <strong id="infoRefreshRate">Measuring...</strong>
+      </div>
+      <div class="info-row">
+        <span>Nyquist limit (Max true TF):</span>
+        <strong id="infoNyquistLimit">-</strong>
+      </div>
+      <div class="info-row" id="rowActualMaxTF">
+        <span>Actual max TF (Right):</span>
+        <strong id="infoActualMaxTF">0.0 Hz</strong>
       </div>
     </div>
 

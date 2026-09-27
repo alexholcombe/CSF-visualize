@@ -14,7 +14,11 @@ const state = {
   minTemporalFreq:     CONFIG.minTemporalFreq,
   deltaTemporalFreq:   CONFIG.deltaTemporalFreq,
   temporalFreqScale:   CONFIG.temporalFreqScale,
-  gamma:               CONFIG.gamma
+  temporalStripWidth:  CONFIG.temporalStripWidth || 20,
+  gamma:               CONFIG.gamma,
+  measuredRefreshRate: CONFIG.defaultFallbackFps || 60.0,
+  nyquistLimit:        (CONFIG.defaultFallbackFps || 60.0) / 2,
+  refreshRateCalibrated: false
 };
 
 // ── URL Query Parameter Parsing & Synchronization ─────────────────────────────
@@ -97,6 +101,16 @@ function parseURLParams() {
       }
     }
   });
+
+  // 3. Temporal strip width
+  const rawTSW = getParamVal('temporalStripWidth');
+  if (rawTSW !== null) {
+    const num = parseInt(rawTSW, 10);
+    const def = defs.temporalStripWidth;
+    if (!isNaN(num) && def) {
+      state.temporalStripWidth = Math.max(def.min, Math.min(def.max, num));
+    }
+  }
 }
 
 /**
@@ -112,7 +126,7 @@ function updateURL() {
       'minSpatialFreqCpd', 'deltaSpatialFreqCpd', 'spatialFreqScale',
       'viewingDistanceCm', 'gratingWidthCm',
       'minTemporalFreq', 'deltaTemporalFreq', 'temporalFreqScale',
-      'gamma'
+      'temporalStripWidth', 'gamma'
     ];
 
     keys.forEach(k => {
@@ -174,6 +188,187 @@ function getMinRGBContrast(gamma) {
 function luminanceToRGB(lum, gamma) {
   const norm = Math.max(0, Math.min(1, (lum - CONFIG.lMin) / (CONFIG.lMax - CONFIG.lMin)));
   return Math.round(255 * Math.pow(norm, 1 / gamma));
+}
+
+// ── Temporal Sampling, Refresh Rate Measurement & Nyquist Limits ─────────────
+/**
+ * Calculates effective temporal frequency accounting for the display's Nyquist limit (R / 2).
+ * Folds frequencies above Nyquist back to their apparent/aliased frequencies.
+ */
+function getTemporalFreqInfo(specifiedTF) {
+  const nyquist = state.nyquistLimit;
+  const r = state.measuredRefreshRate;
+  if (specifiedTF <= nyquist + 0.001) {
+    return {
+      specified: specifiedTF,
+      actual: specifiedTF,
+      isAliased: false,
+      nyquist: nyquist
+    };
+  }
+  const nearestHarmonic = r * Math.round(specifiedTF / r);
+  const actual = Math.abs(specifiedTF - nearestHarmonic);
+  return {
+    specified: specifiedTF,
+    actual: actual,
+    isAliased: true,
+    nyquist: nyquist
+  };
+}
+
+/**
+ * Returns sorted list of valid R/N frame harmonics based on measured refresh rate
+ */
+function getAvailableFrameHarmonics() {
+  const r = state.measuredRefreshRate;
+  const nyquist = state.nyquistLimit;
+  const divisors = CONFIG.supportedFrameDivisors || [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 20, 24, 30, 40, 60, 120];
+  const harmonics = [{ hz: 0.0, frames: Infinity, label: '0.0 Hz (static)' }];
+
+  divisors.forEach(n => {
+    const hz = r / n;
+    if (hz <= nyquist + 0.001) {
+      harmonics.push({
+        hz: Math.round(hz * 100) / 100,
+        frames: n,
+        label: `${(Math.round(hz * 10) / 10).toFixed(1)} Hz (${n}f/cyc)`
+      });
+    }
+  });
+
+  harmonics.sort((a, b) => a.hz - b.hz);
+  return harmonics;
+}
+
+/**
+ * Snaps a frequency to the nearest available R/N frame harmonic
+ */
+function snapToFrameHarmonic(targetHz) {
+  const harmonics = getAvailableFrameHarmonics();
+  let closest = harmonics[0];
+  let minDiff = Math.abs(targetHz - closest.hz);
+
+  for (let i = 1; i < harmonics.length; i++) {
+    const diff = Math.abs(targetHz - harmonics[i].hz);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = harmonics[i];
+    }
+  }
+  return closest;
+}
+
+/**
+ * Formats slider readout text for temporal frequencies, including frame count in integerFrames mode
+ */
+function formatTemporalValText(key, val) {
+  if (key === 'minTemporalFreq') {
+    if (state.temporalStepMode === 'integerFrames') {
+      const h = snapToFrameHarmonic(val);
+      return `${h.hz.toFixed(1)} Hz (${h.frames === Infinity ? 'static' : h.frames + 'f/cyc'})`;
+    }
+    return `${val.toFixed(1)} Hz`;
+  } else if (key === 'deltaTemporalFreq') {
+    if (state.temporalStepMode === 'integerFrames') {
+      const maxHz = state.minTemporalFreq + val;
+      const h = snapToFrameHarmonic(maxHz);
+      return `${val.toFixed(1)} Hz (Max: ${h.hz.toFixed(1)} Hz${h.frames !== Infinity ? ', ' + h.frames + 'f' : ''})`;
+    }
+    return `${val.toFixed(1)} Hz`;
+  }
+  return `${val.toFixed(1)} Hz`;
+}
+
+/**
+ * Clamps temporal frequency slider limits and current values to the detected Nyquist limit (R / 2)
+ */
+function applyNyquistClamping() {
+  if (!CONFIG.clampTemporalToNyquist) return;
+
+  const nyquist = state.nyquistLimit;
+  CONFIG.sliderDefs.minTemporalFreq.max = nyquist;
+
+  const minSlider = document.getElementById('minTemporalFreq');
+  const deltaSlider = document.getElementById('deltaTemporalFreq');
+  if (minSlider) minSlider.max = nyquist;
+
+  if (state.temporalStepMode === 'integerFrames') {
+    const hMin = snapToFrameHarmonic(state.minTemporalFreq);
+    state.minTemporalFreq = Math.min(nyquist, hMin.hz);
+  } else if (state.minTemporalFreq > nyquist) {
+    state.minTemporalFreq = nyquist;
+  }
+  if (minSlider) minSlider.value = state.minTemporalFreq;
+  const minValEl = document.getElementById('minTemporalFreqVal');
+  if (minValEl) minValEl.textContent = formatTemporalValText('minTemporalFreq', state.minTemporalFreq);
+
+  // The maximum allowed delta is what remains up to Nyquist: nyquist - minTemporalFreq
+  const maxAllowedDelta = Math.max(0, nyquist - state.minTemporalFreq);
+  CONFIG.sliderDefs.deltaTemporalFreq.max = nyquist;
+  if (deltaSlider) deltaSlider.max = maxAllowedDelta;
+
+  if (state.temporalStepMode === 'integerFrames') {
+    const targetMax = state.minTemporalFreq + state.deltaTemporalFreq;
+    const hMax = snapToFrameHarmonic(Math.min(nyquist, targetMax));
+    state.deltaTemporalFreq = Math.max(0, Math.round((hMax.hz - state.minTemporalFreq) * 100) / 100);
+  } else if (state.deltaTemporalFreq > maxAllowedDelta) {
+    state.deltaTemporalFreq = maxAllowedDelta;
+  }
+  if (deltaSlider) deltaSlider.value = state.deltaTemporalFreq;
+  const deltaValEl = document.getElementById('deltaTemporalFreqVal');
+  if (deltaValEl) deltaValEl.textContent = formatTemporalValText('deltaTemporalFreq', state.deltaTemporalFreq);
+}
+
+/**
+ * Probes the display's actual refresh rate (Hz / FPS) via consecutive RAF timestamps.
+ * Runs on startup for CONFIG.fpsProbeFrames.
+ */
+function probeRefreshRate(onComplete) {
+  let frameCount = 0;
+  let lastTimestamp = null;
+  const deltas = [];
+
+  function probeStep(timestamp) {
+    if (lastTimestamp !== null) {
+      const delta = timestamp - lastTimestamp;
+      if (delta >= (CONFIG.fpsMinValidDeltaMs || 4.0) && delta <= (CONFIG.fpsMaxValidDeltaMs || 45.0)) {
+        deltas.push(delta);
+      }
+    }
+    lastTimestamp = timestamp;
+    frameCount++;
+
+    if (frameCount < (CONFIG.fpsProbeFrames || 40)) {
+      requestAnimationFrame(probeStep);
+    } else {
+      if (deltas.length >= 10) {
+        deltas.sort((a, b) => a - b);
+        const mid = Math.floor(deltas.length / 2);
+        const medianDelta = deltas.length % 2 !== 0 ? deltas[mid] : (deltas[mid - 1] + deltas[mid]) / 2;
+        let measuredFps = 1000.0 / medianDelta;
+
+        if (CONFIG.snapStandardFps && Array.isArray(CONFIG.standardFpsList)) {
+          for (const stdFps of CONFIG.standardFpsList) {
+            if (Math.abs(measuredFps - stdFps) / stdFps <= 0.04) {
+              measuredFps = stdFps;
+              break;
+            }
+          }
+        }
+        state.measuredRefreshRate = Math.round(measuredFps * 10) / 10;
+      } else {
+        state.measuredRefreshRate = CONFIG.defaultFallbackFps || 60.0;
+      }
+      state.nyquistLimit = state.measuredRefreshRate / 2;
+      state.refreshRateCalibrated = true;
+
+      if (typeof onComplete === 'function') {
+        onComplete();
+      }
+    }
+  }
+
+  requestAnimationFrame(probeStep);
 }
 
 // ── Resize & Layout Geometry ──────────────────────────────────────────────────
@@ -252,37 +447,47 @@ function renderGrating(tSec) {
   }
 
   // Temporal counterphase modulation across width
+  // Frequencies are partitioned into vertical strips of temporalStripWidth CSS pixels,
+  // each snapped to the nearest integer-frames-per-cycle harmonic (R/N).
   const isTemporalActive = state.minTemporalFreq > 0 || state.deltaTemporalFreq > 0;
   if (!isTemporalActive) {
     temporalFactor.fill(1.0);
-  } else if (state.deltaTemporalFreq <= 0.0001) {
-    const factor = Math.cos(2 * Math.PI * state.minTemporalFreq * tSec);
-    temporalFactor.fill(factor);
-  } else if (state.temporalFreqScale === 'logarithmic') {
-    const f0 = state.minTemporalFreq;
-    const f1 = maxTemporalFreq;
-    if (f0 > 0.01) {
-      const kRatioTF = f1 / f0;
-      for (let x = 0; x < gratingPhysW; x++) {
-        const localTF = f0 * Math.pow(kRatioTF, x / gratingPhysW);
-        temporalFactor[x] = Math.cos(2 * Math.PI * localTF * tSec);
-      }
-    } else {
-      const floorTF = Math.min(CONFIG.minLogTemporalFreq, f1);
-      const kRatioTF = f1 / floorTF;
-      temporalFactor[0] = 1.0;
-      for (let x = 1; x < gratingPhysW; x++) {
-        const localTF = floorTF * Math.pow(kRatioTF, x / gratingPhysW);
-        temporalFactor[x] = Math.cos(2 * Math.PI * localTF * tSec);
-      }
-    }
   } else {
-    const deltaTF = state.deltaTemporalFreq / gratingPhysW;
-    for (let x = 0; x < gratingPhysW; x++) {
-      const localTF = state.minTemporalFreq + deltaTF * x;
-      temporalFactor[x] = Math.cos(2 * Math.PI * localTF * tSec);
+    const bandPhysW = Math.max(1, Math.round(state.temporalStripWidth * dpr));
+
+    // For each band, compute the nominal frequency from the strip's centre x position,
+    // snap it to the nearest R/N harmonic, then fill the band's columns with a single cosine.
+    for (let xStart = 0; xStart < gratingPhysW; xStart += bandPhysW) {
+      const xEnd = Math.min(xStart + bandPhysW, gratingPhysW);
+      // Fractional position of band centre in [0, 1]
+      const frac = (xStart + (xEnd - xStart) * 0.5) / gratingPhysW;
+
+      let nominalTF;
+      if (state.deltaTemporalFreq <= 0.0001) {
+        nominalTF = state.minTemporalFreq;
+      } else if (state.temporalFreqScale === 'logarithmic') {
+        const f0 = state.minTemporalFreq;
+        const f1 = maxTemporalFreq;
+        if (f0 > 0.01) {
+          nominalTF = f0 * Math.pow(f1 / f0, frac);
+        } else {
+          const floorTF = Math.min(CONFIG.minLogTemporalFreq, f1);
+          nominalTF = frac === 0 ? 0 : floorTF * Math.pow(f1 / floorTF, frac);
+        }
+      } else {
+        nominalTF = state.minTemporalFreq + frac * state.deltaTemporalFreq;
+      }
+
+      // Snap to nearest integer-frames-per-cycle harmonic (R/N)
+      const snapped = snapToFrameHarmonic(nominalTF);
+      const factor = snapped.hz > 0 ? Math.cos(2 * Math.PI * snapped.hz * tSec) : 1.0;
+
+      for (let x = xStart; x < xEnd; x++) {
+        temporalFactor[x] = factor;
+      }
     }
   }
+
 
   // 3. Strip Distribution: Bottom strip = maxContrast, Top strip = min RGB contrast
   const stripH_phys = state.stripHeight * dpr;
@@ -502,19 +707,43 @@ function drawBottomFrequencyLabels(physH) {
       } else {
         tfVal = state.minTemporalFreq + frac * state.deltaTemporalFreq;
       }
-      const tfText = idx === 0 ? `TF: ${tfVal.toFixed(1)} Hz` : `${tfVal.toFixed(1)} Hz`;
+
+      const tfInfo = getTemporalFreqInfo(tfVal);
+      let tfText;
+      if (tfInfo.isAliased) {
+        tfText = idx === 0
+          ? `TF: ${tfInfo.actual.toFixed(1)} Hz (aliased from ${tfInfo.specified.toFixed(1)} Hz)`
+          : `${tfInfo.actual.toFixed(1)} Hz (aliased from ${tfInfo.specified.toFixed(1)} Hz)`;
+      } else if (state.temporalStepMode === 'integerFrames') {
+        const harmonic = snapToFrameHarmonic(tfInfo.actual);
+        const fStr = harmonic.frames === Infinity ? 'static' : `${harmonic.frames}f`;
+        tfText = idx === 0 ? `TF: ${harmonic.hz.toFixed(1)} Hz (${fStr})` : `${harmonic.hz.toFixed(1)} Hz (${fStr})`;
+      } else {
+        tfText = idx === 0 ? `TF: ${tfInfo.actual.toFixed(1)} Hz` : `${tfInfo.actual.toFixed(1)} Hz`;
+      }
       ctx.fillText(tfText, posX, tfY);
     }
   });
 }
 
 // ── Animation Loop ────────────────────────────────────────────────────────────
+// ── Animation Loop ────────────────────────────────────────────────────────────
+let lastInfoUpdateMs = 0;
+
 function animationLoop(timestamp) {
   if (animStartTime === null) {
     animStartTime = timestamp;
   }
   const tSec = (timestamp - animStartTime) / 1000.0;
   renderGrating(tSec);
+
+  // Throttle the sidebar temporal readout to every 500 ms during animation
+  // (static parameters don't change frame-to-frame; only actual max TF readout is dynamic)
+  if (timestamp - lastInfoUpdateMs >= 500) {
+    updateInfoTemporalReadout();
+    lastInfoUpdateMs = timestamp;
+  }
+
   animFrameId = requestAnimationFrame(animationLoop);
 }
 
@@ -524,6 +753,7 @@ function updateAnimationState() {
   if (isTemporalActive) {
     if (!animFrameId) {
       animStartTime = null;
+      lastInfoUpdateMs = 0;
       animFrameId = requestAnimationFrame(animationLoop);
     }
   } else {
@@ -535,6 +765,7 @@ function updateAnimationState() {
     renderGrating(0);
   }
 }
+
 
 // ── Info Card Readouts ────────────────────────────────────────────────────────
 function updateInfo() {
@@ -562,6 +793,42 @@ function updateInfo() {
     const step = (numStrips > 1 && cMax > cMin) ? (cMax - cMin) / (numStrips - 1) : 0;
     stepEl.textContent = step.toFixed(4);
   }
+
+  // Refresh rate, Nyquist limit, and actual highest temporal frequency
+  const refreshEl = document.getElementById('infoRefreshRate');
+  if (refreshEl) {
+    if (state.refreshRateCalibrated) {
+      const fpsStr = state.measuredRefreshRate % 1 === 0
+        ? state.measuredRefreshRate.toFixed(0)
+        : state.measuredRefreshRate.toFixed(1);
+      refreshEl.textContent = `${fpsStr} Hz`;
+    } else {
+      refreshEl.textContent = 'Measuring...';
+    }
+  }
+
+  const nyquistEl = document.getElementById('infoNyquistLimit');
+  if (nyquistEl) {
+    nyquistEl.textContent = `${state.nyquistLimit.toFixed(1)} Hz`;
+  }
+
+  const actualTfEl = document.getElementById('infoActualMaxTF');
+  if (actualTfEl) {
+    const specifiedMaxTF = state.minTemporalFreq + state.deltaTemporalFreq;
+    const tfInfo = getTemporalFreqInfo(specifiedMaxTF);
+    if (tfInfo.isAliased) {
+      actualTfEl.textContent = `${tfInfo.actual.toFixed(1)} Hz (aliased from ${tfInfo.specified.toFixed(1)} Hz)`;
+      actualTfEl.style.color = '#f59e0b';
+    } else if (state.temporalStepMode === 'integerFrames') {
+      const h = snapToFrameHarmonic(tfInfo.actual);
+      const fStr = h.frames === Infinity ? 'static' : `${h.frames} frames/cyc`;
+      actualTfEl.textContent = `${h.hz.toFixed(1)} Hz (${fStr})`;
+      actualTfEl.style.color = '#e2e8f0';
+    } else {
+      actualTfEl.textContent = `${tfInfo.actual.toFixed(1)} Hz`;
+      actualTfEl.style.color = '#e2e8f0';
+    }
+  }
 }
 
 // ── Slider Initialization & Event Binding ─────────────────────────────────────
@@ -575,8 +842,8 @@ function setupSliders() {
     { id: 'deltaSpatialFreqCpd', key: 'deltaSpatialFreqCpd', parse: parseFloat, fmt: v => `${v.toFixed(1)} cpd` },
     { id: 'viewingDistanceCm',   key: 'viewingDistanceCm',   parse: parseInt,   fmt: v => `${v} cm` },
     { id: 'gratingWidthCm',      key: 'gratingWidthCm',      parse: parseInt,   fmt: v => `${v} cm` },
-    { id: 'minTemporalFreq',     key: 'minTemporalFreq',     parse: parseFloat, fmt: v => `${v.toFixed(1)} Hz` },
-    { id: 'deltaTemporalFreq',   key: 'deltaTemporalFreq',   parse: parseFloat, fmt: v => `${v.toFixed(1)} Hz` },
+    { id: 'minTemporalFreq',     key: 'minTemporalFreq',     parse: parseFloat, fmt: v => formatTemporalValText('minTemporalFreq', v) },
+    { id: 'deltaTemporalFreq',   key: 'deltaTemporalFreq',   parse: parseFloat, fmt: v => formatTemporalValText('deltaTemporalFreq', v) },
     { id: 'gamma',               key: 'gamma',               parse: parseFloat, fmt: v => v.toFixed(2) }
   ];
 
@@ -592,8 +859,40 @@ function setupSliders() {
     display.textContent = fmt(state[key]);
 
     slider.addEventListener('input', () => {
-      state[key] = parse(slider.value);
-      display.textContent = fmt(state[key]);
+      let val = parse(slider.value);
+
+      if (key === 'minTemporalFreq' || key === 'deltaTemporalFreq') {
+        if (state.temporalStepMode === 'integerFrames') {
+          if (key === 'minTemporalFreq') {
+            const h = snapToFrameHarmonic(val);
+            val = Math.min(state.nyquistLimit, h.hz);
+            slider.value = val;
+          } else if (key === 'deltaTemporalFreq') {
+            const targetMax = state.minTemporalFreq + val;
+            const h = snapToFrameHarmonic(Math.min(state.nyquistLimit, targetMax));
+            val = Math.max(0, Math.round((h.hz - state.minTemporalFreq) * 100) / 100);
+            slider.value = val;
+          }
+        }
+
+        state[key] = val;
+
+        if (CONFIG.clampTemporalToNyquist) {
+          const maxAllowedDelta = Math.max(0, state.nyquistLimit - state.minTemporalFreq);
+          const deltaSlider = document.getElementById('deltaTemporalFreq');
+          if (deltaSlider) deltaSlider.max = maxAllowedDelta;
+
+          if (state.deltaTemporalFreq > maxAllowedDelta) {
+            state.deltaTemporalFreq = maxAllowedDelta;
+            if (deltaSlider) deltaSlider.value = state.deltaTemporalFreq;
+          }
+        }
+        display.textContent = formatTemporalValText(key, state[key]);
+      } else {
+        state[key] = val;
+        display.textContent = fmt(state[key]);
+      }
+
       updateInfo();
       updateAnimationState();
       updateURL();
@@ -616,6 +915,13 @@ function setupSliders() {
   const contrastSelect = setupSelect('contrastScale', 'contrastScale');
   const spatialSelect = setupSelect('spatialFreqScale', 'spatialFreqScale');
   const temporalSelect = setupSelect('temporalFreqScale', 'temporalFreqScale');
+  const temporalStepModeSelect = setupSelect('temporalStepMode', 'temporalStepMode');
+  temporalStepModeSelect.addEventListener('change', () => {
+    applyNyquistClamping();
+    updateInfo();
+    updateAnimationState();
+    updateURL();
+  });
 
   // Copy Shareable Link button
   const copyBtn = document.getElementById('copyUrlBtn');
@@ -663,6 +969,9 @@ function setupSliders() {
     state.temporalFreqScale = CONFIG.temporalFreqScale;
     temporalSelect.value = state.temporalFreqScale;
 
+    state.temporalStepMode = CONFIG.temporalStepMode || 'continuous';
+    temporalStepModeSelect.value = state.temporalStepMode;
+
     try {
       if (window.history && window.history.replaceState) {
         window.history.replaceState(null, '', window.location.pathname);
@@ -671,6 +980,7 @@ function setupSliders() {
       // Ignore on local file://
     }
 
+    applyNyquistClamping();
     updateInfo();
     updateAnimationState();
   });
@@ -683,6 +993,17 @@ function init() {
   setupSliders();
   updateInfo();
   updateAnimationState();
+
+  // Run refresh rate calibration probe on startup
+  probeRefreshRate(() => {
+    applyNyquistClamping();
+    updateInfo();
+    if (state.minTemporalFreq > 0 || state.deltaTemporalFreq > 0) {
+      renderGrating((performance.now() - (animStartTime || performance.now())) / 1000.0);
+    } else {
+      renderGrating(0);
+    }
+  });
 
   window.addEventListener('resize', () => {
     resizeCanvas();
