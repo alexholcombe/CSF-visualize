@@ -15,6 +15,7 @@ const state = {
   deltaTemporalFreq:   CONFIG.deltaTemporalFreq,
   temporalFreqScale:   CONFIG.temporalFreqScale,
   temporalStripWidth:  CONFIG.temporalStripWidth || 20,
+  temporalOccluderWidth: CONFIG.temporalOccluderWidth || 0,
   gamma:               CONFIG.gamma,
   measuredRefreshRate: CONFIG.defaultFallbackFps || 60.0,
   nyquistLimit:        (CONFIG.defaultFallbackFps || 60.0) / 2,
@@ -57,6 +58,7 @@ function parseURLParams() {
     { key: 'gratingWidthCm',      parse: parseInt },
     { key: 'minTemporalFreq',     parse: parseFloat },
     { key: 'deltaTemporalFreq',   parse: parseFloat },
+    { key: 'temporalOccluderWidth', parse: parseInt },
     { key: 'gamma',               parse: parseFloat }
   ];
 
@@ -126,7 +128,7 @@ function updateURL() {
       'minSpatialFreqCpd', 'deltaSpatialFreqCpd', 'spatialFreqScale',
       'viewingDistanceCm', 'gratingWidthCm',
       'minTemporalFreq', 'deltaTemporalFreq', 'temporalFreqScale',
-      'temporalStripWidth', 'gamma'
+      'temporalStripWidth', 'temporalOccluderWidth', 'gamma'
     ];
 
     keys.forEach(k => {
@@ -170,7 +172,7 @@ function getMidLuminance(gamma) {
 }
 
 /**
- * Minimum non-zero Michelson contrast imposed by integer RGB quantization.
+ * Minimum non-zero Weber contrast imposed by integer RGB quantization.
  * Modulating by ±1 integer level (peak=187, trough=185) around mid-grey (186):
  * deltaL = (L(187) - L(185)) / 2
  * cMin = deltaL / L(186)
@@ -566,8 +568,28 @@ function renderGrating(tSec) {
   ctx.putImageData(imgData, 0, 0);
 
   // 6. Draw Text Overlays
+  drawTemporalBoundaryOccluders();
   drawRightContrastLabels(stripLabels, physW);
   drawBottomFrequencyLabels(physH);
+}
+
+// ── Temporal Strip Boundary Occluders ────────────────────────────────────────
+function drawTemporalBoundaryOccluders() {
+  if (state.temporalOccluderWidth <= 0 || gratingPhysW <= 0 || gratingPhysH <= 0) return;
+
+  const bandPhysW = Math.max(1, Math.round(state.temporalStripWidth * dpr));
+  const occluderPhysW = state.temporalOccluderWidth * dpr;
+
+  // Match the light blue used for slider/readout accents in style.css (#38bdf8).
+  ctx.save();
+  ctx.fillStyle = '#38bdf8';
+
+  // Internal boundaries only: no occluder on the left or right outer edge.
+  for (let boundaryX = bandPhysW; boundaryX < gratingPhysW; boundaryX += bandPhysW) {
+    ctx.fillRect(boundaryX - occluderPhysW / 2, 0, occluderPhysW, gratingPhysH);
+  }
+
+  ctx.restore();
 }
 
 // ── Right Strip: White Contrast Labels with Black Tick Lines ──────────────────
@@ -584,30 +606,9 @@ function drawRightContrastLabels(stripLabels, physW) {
   const textX = tickEndX + Math.round(6 * dpr);
 
   const minSeparation = fontSize * 2.2;
-  const topLabel = stripLabels[stripLabels.length - 1]; // Top strip with min non-zero contrast
+  const topLabel = stripLabels[stripLabels.length - 1];
+  const labelsToDraw = [{ contrast: topLabel.contrast, yCenter: topLabel.yCenter }];
 
-  const labelsToDraw = [];
-
-  // Vertical axis title, farther from the grating than the numeric labels.
-  const rightMarginPhysW = physW - gratingPhysW;
-  const axisX = gratingPhysW + rightMarginPhysW - Math.round(15 * dpr);
-  const axisY = gratingPhysH / 2;
-  ctx.save();
-  ctx.translate(axisX, axisY);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText('Contrast', 0, 0);
-  ctx.restore();
-
-  // Always include top strip label
-  labelsToDraw.push({
-    contrast: topLabel.contrast,
-    yCenter: topLabel.yCenter
-  });
-
-  // Select remaining labels from bottom (k=0) upward
   let lastY = -Infinity;
   for (let i = 0; i < stripLabels.length - 1; i++) {
     const item = stripLabels[i];
@@ -618,12 +619,8 @@ function drawRightContrastLabels(stripLabels, physW) {
     }
   }
 
-
-  // Render each label with black tick line
   labelsToDraw.forEach(item => {
     const y = Math.round(item.yCenter);
-
-    // Black tick line extending toward grating
     ctx.beginPath();
     ctx.moveTo(tickStartX, y);
     ctx.lineTo(tickEndX, y);
@@ -631,13 +628,9 @@ function drawRightContrastLabels(stripLabels, physW) {
     ctx.lineWidth = Math.max(1, Math.round(1.5 * dpr));
     ctx.stroke();
 
-    // White text
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
 
-    // Format contrast value with enough decimals to never display as "0.000...".
-    // For small values (e.g. cMin ≈ 0.012) keep adding decimal places until
-    // the formatted string is not all zeros after the decimal point.
     let txt;
     if (item.contrast >= 0.10) {
       txt = item.contrast.toFixed(2);
@@ -648,9 +641,21 @@ function drawRightContrastLabels(stripLabels, physW) {
         decimals++;
       } while (parseFloat(txt) === 0 && decimals <= 8);
     }
-
     ctx.fillText(txt, textX, y);
   });
+
+  // Vertical axis title, farther from the grating than the numeric labels.
+  const rightMarginPhysW = physW - gratingPhysW;
+  const axisX = gratingPhysW + rightMarginPhysW - Math.round(8 * dpr);
+  const axisY = gratingPhysH / 2;
+  ctx.save();
+  ctx.translate(axisX, axisY);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('contrast', 0, 0);
+  ctx.restore();
 }
 
 // ── Bottom Strip: Conditional Spatial & Temporal Frequency Labels ─────────────
@@ -772,7 +777,7 @@ function drawBottomFrequencyLabels(physH) {
 
     // Units appear once as the temporal-frequency axis title, never after each number.
     ctx.textAlign = 'center';
-    ctx.fillText('Cycles per second (Hz)', gratingPhysW / 2, tfTitleY);
+    ctx.fillText('cycles per second (Hz)', gratingPhysW / 2, tfTitleY);
   }
 }
 
@@ -895,6 +900,7 @@ function setupSliders() {
     { id: 'minTemporalFreq',     key: 'minTemporalFreq',     parse: parseFloat, fmt: v => formatTemporalValText('minTemporalFreq', v) },
     { id: 'deltaTemporalFreq',   key: 'deltaTemporalFreq',   parse: parseFloat, fmt: v => formatTemporalValText('deltaTemporalFreq', v) },
     { id: 'temporalStripWidth',  key: 'temporalStripWidth',  parse: parseInt,   fmt: v => `${v} px` },
+    { id: 'temporalOccluderWidth', key: 'temporalOccluderWidth', parse: parseInt, fmt: v => `${v} px` },
     { id: 'gamma',               key: 'gamma',               parse: parseFloat, fmt: v => v.toFixed(2) }
   ];
 

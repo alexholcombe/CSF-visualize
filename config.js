@@ -45,6 +45,7 @@ const CONFIG = {
 
   // Temporal quantization & strip width
   temporalStripWidth: 20,       // Width in CSS pixels of each constant temporal frequency vertical strip (1 to 100)
+  temporalOccluderWidth: 0,     // Light-blue occluder width centered on temporal-strip boundaries (0 to 10 CSS px)
   supportedFrameDivisors: [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 20, 24, 30, 40, 60, 120], // N frames per cycle
 
   // Slider range bounds and steps
@@ -58,6 +59,7 @@ const CONFIG = {
     minTemporalFreq:     { min: 0.0,  max: 50,  step: 0.5,  unit: 'Hz' },
     deltaTemporalFreq:   { min: 0.0,  max: 50,  step: 0.5,  unit: 'Hz' },
     temporalStripWidth:  { min: 1,    max: 100, step: 1,    unit: 'px' },
+    temporalOccluderWidth:{ min: 0,    max: 10,  step: 1,    unit: 'px' },
     gamma:               { min: 1.0,  max: 2.6, step: 0.05, unit: '' }
   },
 
@@ -75,6 +77,7 @@ const CONFIG = {
     deltaTemporalFreq:   ['deltatemporalfreq', 'delta_tf', 'tf_range', 'tf_delta'],
     temporalFreqScale:   ['temporalfreqscale', 'tf_scale', 'temporal_scale'],
     temporalStripWidth:  ['temporalstripwidth', 'tf_strip_width', 'tf_width', 'band_width', 'bw'],
+    temporalOccluderWidth:['temporaloccluderwidth', 'tf_occluder_width', 'occluder_width', 'ow'],
     gamma:               ['gamma', 'exponent', 'g']
   }
 };
