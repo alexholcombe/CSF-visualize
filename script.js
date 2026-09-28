@@ -170,7 +170,7 @@ function getMidLuminance(gamma) {
 }
 
 /**
- * Minimum non-zero Weber contrast imposed by integer RGB quantization.
+ * Minimum non-zero Michelson contrast imposed by integer RGB quantization.
  * Modulating by ±1 integer level (peak=187, trough=185) around mid-grey (186):
  * deltaL = (L(187) - L(185)) / 2
  * cMin = deltaL / L(186)
@@ -588,6 +588,19 @@ function drawRightContrastLabels(stripLabels, physW) {
 
   const labelsToDraw = [];
 
+  // Vertical axis title, farther from the grating than the numeric labels.
+  const rightMarginPhysW = physW - gratingPhysW;
+  const axisX = gratingPhysW + rightMarginPhysW - Math.round(15 * dpr);
+  const axisY = gratingPhysH / 2;
+  ctx.save();
+  ctx.translate(axisX, axisY);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('Contrast', 0, 0);
+  ctx.restore();
+
   // Always include top strip label
   labelsToDraw.push({
     contrast: topLabel.contrast,
@@ -604,6 +617,7 @@ function drawRightContrastLabels(stripLabels, physW) {
       lastY = item.yCenter;
     }
   }
+
 
   // Render each label with black tick line
   labelsToDraw.forEach(item => {
@@ -643,7 +657,6 @@ function drawRightContrastLabels(stripLabels, physW) {
 function drawBottomFrequencyLabels(physH) {
   const showSF = state.deltaSpatialFreqCpd >= 0.01;
   const showTF = state.deltaTemporalFreq >= 0.01;
-
   if (!showSF && !showTF) return;
 
   const bottomMarginPhysH = physH - gratingPhysH;
@@ -652,35 +665,37 @@ function drawBottomFrequencyLabels(physH) {
   ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'middle';
 
-  let sfY, tfY;
+  // Keep numeric labels higher, reserving the bottom of the margin for the TF axis title.
+  let sfY, tfY, tfTitleY;
   if (showSF && showTF) {
-    sfY = gratingPhysH + bottomMarginPhysH * 0.32;
-    tfY = gratingPhysH + bottomMarginPhysH * 0.72;
+    sfY = gratingPhysH + bottomMarginPhysH * 0.22;
+    tfY = gratingPhysH + bottomMarginPhysH * 0.55;
+    tfTitleY = gratingPhysH + bottomMarginPhysH * 0.84;
   } else if (showSF) {
     sfY = gratingPhysH + bottomMarginPhysH * 0.50;
   } else {
-    tfY = gratingPhysH + bottomMarginPhysH * 0.50;
+    tfY = gratingPhysH + bottomMarginPhysH * 0.30;
+    tfTitleY = gratingPhysH + bottomMarginPhysH * 0.72;
   }
 
-  // 5 evenly spaced anchor points: 0%, 25%, 50%, 75%, 100%
   const fractions = [0.0, 0.25, 0.50, 0.75, 1.0];
   const maxSF = state.minSpatialFreqCpd + state.deltaSpatialFreqCpd;
   const maxTF = state.minTemporalFreq + state.deltaTemporalFreq;
 
-  fractions.forEach((frac, idx) => {
-    let posX = Math.round(frac * gratingPhysW);
-    if (idx === 0) {
-      ctx.textAlign = 'left';
-      posX += Math.round(8 * dpr);
-    } else if (idx === fractions.length - 1) {
-      ctx.textAlign = 'right';
-      posX -= Math.round(8 * dpr);
-    } else {
-      ctx.textAlign = 'center';
-    }
+  // Spatial-frequency labels retain their existing cpd units.
+  if (showSF) {
+    fractions.forEach((frac, idx) => {
+      let posX = Math.round(frac * gratingPhysW);
+      if (idx === 0) {
+        ctx.textAlign = 'left';
+        posX += Math.round(8 * dpr);
+      } else if (idx === fractions.length - 1) {
+        ctx.textAlign = 'right';
+        posX -= Math.round(8 * dpr);
+      } else {
+        ctx.textAlign = 'center';
+      }
 
-    // Spatial Frequency label
-    if (showSF) {
       let sfVal;
       if (state.spatialFreqScale === 'logarithmic') {
         const ratio = maxSF / state.minSpatialFreqCpd;
@@ -690,40 +705,75 @@ function drawBottomFrequencyLabels(physH) {
       }
       const sfText = idx === 0 ? `SF: ${sfVal.toFixed(2)} cpd` : `${sfVal.toFixed(2)} cpd`;
       ctx.fillText(sfText, posX, sfY);
-    }
+    });
+  }
 
-    // Temporal Frequency label
-    if (showTF) {
-      let tfVal;
+  if (showTF) {
+    const bandPhysW = Math.max(1, Math.round(state.temporalStripWidth * dpr));
+
+    // Use one centered number per rendered temporal strip when the strip is wide
+    // enough to contain its own label. Otherwise fall back to five axis samples.
+    let allBandsFit = true;
+    const bandLabels = [];
+    for (let xStart = 0; xStart < gratingPhysW; xStart += bandPhysW) {
+      const xEnd = Math.min(xStart + bandPhysW, gratingPhysW);
+      const frac = (xStart + (xEnd - xStart) * 0.5) / gratingPhysW;
+      let nominalTF;
       if (state.temporalFreqScale === 'logarithmic') {
         const f0 = state.minTemporalFreq;
         if (f0 > 0.01) {
-          const ratio = maxTF / f0;
-          tfVal = f0 * Math.pow(ratio, frac);
+          nominalTF = f0 * Math.pow(maxTF / f0, frac);
         } else {
           const floorTF = Math.min(CONFIG.minLogTemporalFreq, maxTF);
-          tfVal = frac === 0 ? 0 : floorTF * Math.pow(maxTF / floorTF, frac);
+          nominalTF = frac === 0 ? 0 : floorTF * Math.pow(maxTF / floorTF, frac);
         }
       } else {
-        tfVal = state.minTemporalFreq + frac * state.deltaTemporalFreq;
+        nominalTF = state.minTemporalFreq + frac * state.deltaTemporalFreq;
       }
-
-      const tfInfo = getTemporalFreqInfo(tfVal);
-      let tfText;
-      if (tfInfo.isAliased) {
-        tfText = idx === 0
-          ? `TF: ${tfInfo.actual.toFixed(1)} Hz (aliased from ${tfInfo.specified.toFixed(1)} Hz)`
-          : `${tfInfo.actual.toFixed(1)} Hz (aliased from ${tfInfo.specified.toFixed(1)} Hz)`;
-      } else if (state.temporalStepMode === 'integerFrames') {
-        const harmonic = snapToFrameHarmonic(tfInfo.actual);
-        const fStr = harmonic.frames === Infinity ? 'static' : `${harmonic.frames}f`;
-        tfText = idx === 0 ? `TF: ${harmonic.hz.toFixed(1)} Hz (${fStr})` : `${harmonic.hz.toFixed(1)} Hz (${fStr})`;
-      } else {
-        tfText = idx === 0 ? `TF: ${tfInfo.actual.toFixed(1)} Hz` : `${tfInfo.actual.toFixed(1)} Hz`;
-      }
-      ctx.fillText(tfText, posX, tfY);
+      const harmonic = snapToFrameHarmonic(nominalTF);
+      const label = harmonic.hz.toFixed(1);
+      const available = (xEnd - xStart) - Math.round(6 * dpr);
+      if (ctx.measureText(label).width > available) allBandsFit = false;
+      bandLabels.push({ x: (xStart + xEnd) / 2, label });
     }
-  });
+
+    if (allBandsFit && bandLabels.length > 0) {
+      ctx.textAlign = 'center';
+      bandLabels.forEach(item => ctx.fillText(item.label, item.x, tfY));
+    } else {
+      fractions.forEach((frac, idx) => {
+        let posX = Math.round(frac * gratingPhysW);
+        if (idx === 0) {
+          ctx.textAlign = 'left';
+          posX += Math.round(8 * dpr);
+        } else if (idx === fractions.length - 1) {
+          ctx.textAlign = 'right';
+          posX -= Math.round(8 * dpr);
+        } else {
+          ctx.textAlign = 'center';
+        }
+
+        let tfVal;
+        if (state.temporalFreqScale === 'logarithmic') {
+          const f0 = state.minTemporalFreq;
+          if (f0 > 0.01) {
+            tfVal = f0 * Math.pow(maxTF / f0, frac);
+          } else {
+            const floorTF = Math.min(CONFIG.minLogTemporalFreq, maxTF);
+            tfVal = frac === 0 ? 0 : floorTF * Math.pow(maxTF / floorTF, frac);
+          }
+        } else {
+          tfVal = state.minTemporalFreq + frac * state.deltaTemporalFreq;
+        }
+        const harmonic = snapToFrameHarmonic(tfVal);
+        ctx.fillText(harmonic.hz.toFixed(1), posX, tfY);
+      });
+    }
+
+    // Units appear once as the temporal-frequency axis title, never after each number.
+    ctx.textAlign = 'center';
+    ctx.fillText('Cycles per second (Hz)', gratingPhysW / 2, tfTitleY);
+  }
 }
 
 // ── Animation Loop ────────────────────────────────────────────────────────────
