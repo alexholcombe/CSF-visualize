@@ -740,7 +740,7 @@ function animationLoop(timestamp) {
   // Throttle the sidebar temporal readout to every 500 ms during animation
   // (static parameters don't change frame-to-frame; only actual max TF readout is dynamic)
   if (timestamp - lastInfoUpdateMs >= 500) {
-    updateInfoTemporalReadout();
+    updateInfo();
     lastInfoUpdateMs = timestamp;
   }
 
@@ -844,6 +844,7 @@ function setupSliders() {
     { id: 'gratingWidthCm',      key: 'gratingWidthCm',      parse: parseInt,   fmt: v => `${v} cm` },
     { id: 'minTemporalFreq',     key: 'minTemporalFreq',     parse: parseFloat, fmt: v => formatTemporalValText('minTemporalFreq', v) },
     { id: 'deltaTemporalFreq',   key: 'deltaTemporalFreq',   parse: parseFloat, fmt: v => formatTemporalValText('deltaTemporalFreq', v) },
+    { id: 'temporalStripWidth',  key: 'temporalStripWidth',  parse: parseInt,   fmt: v => `${v} px` },
     { id: 'gamma',               key: 'gamma',               parse: parseFloat, fmt: v => v.toFixed(2) }
   ];
 
@@ -862,32 +863,49 @@ function setupSliders() {
       let val = parse(slider.value);
 
       if (key === 'minTemporalFreq' || key === 'deltaTemporalFreq') {
-        if (state.temporalStepMode === 'integerFrames') {
-          if (key === 'minTemporalFreq') {
-            const h = snapToFrameHarmonic(val);
-            val = Math.min(state.nyquistLimit, h.hz);
-            slider.value = val;
-          } else if (key === 'deltaTemporalFreq') {
-            const targetMax = state.minTemporalFreq + val;
-            const h = snapToFrameHarmonic(Math.min(state.nyquistLimit, targetMax));
-            val = Math.max(0, Math.round((h.hz - state.minTemporalFreq) * 100) / 100);
-            slider.value = val;
-          }
+        if (key === 'minTemporalFreq') {
+          const h = snapToFrameHarmonic(val);
+          val = Math.min(state.nyquistLimit, h.hz);
+          slider.value = val;
+        } else if (key === 'deltaTemporalFreq') {
+          const targetMax = state.minTemporalFreq + val;
+          const h = snapToFrameHarmonic(
+            Math.min(state.nyquistLimit, targetMax)
+          );
+          val = Math.max(
+            0,
+            Math.round((h.hz - state.minTemporalFreq) * 100) / 100
+          );
+          slider.value = val;
         }
 
         state[key] = val;
 
         if (CONFIG.clampTemporalToNyquist) {
-          const maxAllowedDelta = Math.max(0, state.nyquistLimit - state.minTemporalFreq);
-          const deltaSlider = document.getElementById('deltaTemporalFreq');
-          if (deltaSlider) deltaSlider.max = maxAllowedDelta;
+          const maxAllowedDelta = Math.max(
+            0,
+            state.nyquistLimit - state.minTemporalFreq
+          );
+
+          const deltaSlider =
+            document.getElementById('deltaTemporalFreq');
+
+          if (deltaSlider) {
+            deltaSlider.max = maxAllowedDelta;
+          }
 
           if (state.deltaTemporalFreq > maxAllowedDelta) {
             state.deltaTemporalFreq = maxAllowedDelta;
-            if (deltaSlider) deltaSlider.value = state.deltaTemporalFreq;
+
+            if (deltaSlider) {
+              deltaSlider.value = state.deltaTemporalFreq;
+            }
           }
         }
-        display.textContent = formatTemporalValText(key, state[key]);
+
+        display.textContent =
+          formatTemporalValText(key, state[key]);
+
       } else {
         state[key] = val;
         display.textContent = fmt(state[key]);
@@ -903,38 +921,46 @@ function setupSliders() {
   const setupSelect = (id, key) => {
     const select = document.getElementById(id);
     select.value = state[key];
+
     select.addEventListener('change', () => {
       state[key] = select.value;
       updateInfo();
       updateAnimationState();
       updateURL();
     });
+
     return select;
   };
 
-  const contrastSelect = setupSelect('contrastScale', 'contrastScale');
-  const spatialSelect = setupSelect('spatialFreqScale', 'spatialFreqScale');
-  const temporalSelect = setupSelect('temporalFreqScale', 'temporalFreqScale');
-  const temporalStepModeSelect = setupSelect('temporalStepMode', 'temporalStepMode');
-  temporalStepModeSelect.addEventListener('change', () => {
-    applyNyquistClamping();
-    updateInfo();
-    updateAnimationState();
-    updateURL();
-  });
+  const contrastSelect =
+    setupSelect('contrastScale', 'contrastScale');
+
+  const spatialSelect =
+    setupSelect('spatialFreqScale', 'spatialFreqScale');
+
+  const temporalSelect =
+    setupSelect('temporalFreqScale', 'temporalFreqScale');
 
   // Copy Shareable Link button
   const copyBtn = document.getElementById('copyUrlBtn');
+
   if (copyBtn) {
     copyBtn.addEventListener('click', () => {
       updateURL();
+
       const currentUrl = window.location.href;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(currentUrl).then(() => {
-          showCopySuccess();
-        }).catch(() => {
-          prompt('Copy this link:', currentUrl);
-        });
+
+      if (navigator.clipboard &&
+          navigator.clipboard.writeText) {
+
+        navigator.clipboard.writeText(currentUrl)
+          .then(() => {
+            showCopySuccess();
+          })
+          .catch(() => {
+            prompt('Copy this link:', currentUrl);
+          });
+
       } else {
         prompt('Copy this link:', currentUrl);
       }
@@ -942,8 +968,10 @@ function setupSliders() {
 
     function showCopySuccess() {
       const origText = copyBtn.textContent;
+
       copyBtn.textContent = 'Copied!';
       copyBtn.classList.add('copied');
+
       setTimeout(() => {
         copyBtn.textContent = origText;
         copyBtn.classList.remove('copied');
@@ -952,38 +980,46 @@ function setupSliders() {
   }
 
   // Reset button
-  document.getElementById('resetBtn').addEventListener('click', () => {
-    sliderKeys.forEach(({ id, key, fmt }) => {
-      state[key] = CONFIG[key];
-      const slider = document.getElementById(id);
-      slider.value = state[key];
-      document.getElementById(id + 'Val').textContent = fmt(state[key]);
-    });
+  document.getElementById('resetBtn')
+    .addEventListener('click', () => {
 
-    state.contrastScale = CONFIG.contrastScale;
-    contrastSelect.value = state.contrastScale;
+      sliderKeys.forEach(({ id, key, fmt }) => {
+        state[key] = CONFIG[key];
 
-    state.spatialFreqScale = CONFIG.spatialFreqScale;
-    spatialSelect.value = state.spatialFreqScale;
+        const slider = document.getElementById(id);
+        slider.value = state[key];
 
-    state.temporalFreqScale = CONFIG.temporalFreqScale;
-    temporalSelect.value = state.temporalFreqScale;
+        document.getElementById(id + 'Val').textContent =
+          fmt(state[key]);
+      });
 
-    state.temporalStepMode = CONFIG.temporalStepMode || 'continuous';
-    temporalStepModeSelect.value = state.temporalStepMode;
+      state.contrastScale = CONFIG.contrastScale;
+      contrastSelect.value = state.contrastScale;
 
-    try {
-      if (window.history && window.history.replaceState) {
-        window.history.replaceState(null, '', window.location.pathname);
+      state.spatialFreqScale = CONFIG.spatialFreqScale;
+      spatialSelect.value = state.spatialFreqScale;
+
+      state.temporalFreqScale = CONFIG.temporalFreqScale;
+      temporalSelect.value = state.temporalFreqScale;
+
+      try {
+        if (window.history &&
+            window.history.replaceState) {
+
+          window.history.replaceState(
+            null,
+            '',
+            window.location.pathname
+          );
+        }
+      } catch (e) {
+        // Ignore on local file://
       }
-    } catch (e) {
-      // Ignore on local file://
-    }
 
-    applyNyquistClamping();
-    updateInfo();
-    updateAnimationState();
-  });
+      applyNyquistClamping();
+      updateInfo();
+      updateAnimationState();
+    });
 }
 
 // ── App Initialization ────────────────────────────────────────────────────────
