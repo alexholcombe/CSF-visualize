@@ -24,7 +24,7 @@ const CONFIG = {
   gratingWidthCm: 30.0,    // Width of grating display area in cm (5 to 60)
 
   // Spatial frequency limits in cycles per degree (cpd)
-  minSpatialFreqCpd: 0.06,   // Leftmost spatial frequency in cpd (min 0.03, default 0.06)
+  minSpatialFreqCpd: 0.03,   // Leftmost spatial frequency in cpd (min 0.03, default 0.06)
   deltaSpatialFreqCpd: 2.0,  // Max - Min range in cpd (default 2.0 cpd). 0 = uniform
   spatialFreqScale: 'linear', // 'linear' or 'logarithmic'
 
@@ -52,7 +52,7 @@ const CONFIG = {
   sliderDefs: {
     stripHeight:         { min: 1,    max: 40,  step: 1,    unit: 'px' },
     maxContrast:         { min: 0.0,  max: 1.0, step: 0.01, unit: '' },
-    minSpatialFreqCpd:   { min: 0.03, max: 15,  step: 0.01, unit: 'cpd' },
+    minSpatialFreqCpd:   { min: 0.0, max: 15,  step: 0.01, unit: 'cpd' },
     deltaSpatialFreqCpd: { min: 0.0,  max: 25,  step: 0.1,  unit: 'cpd' },
     viewingDistanceCm:   { min: 20,   max: 200,  step: 1,    unit: 'cm' },
     gratingWidthCm:      { min: 5,    max: 60,  step: 1,    unit: 'cm' },

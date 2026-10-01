@@ -425,9 +425,22 @@ function renderGrating(tSec) {
   const sinChirp = new Float64Array(gratingPhysW);
   const temporalFactor = new Float64Array(gratingPhysW);
 
+  // isTemporalActive is needed before sinChirp (for isZeroSFMode)
+  const isTemporalActive = state.minTemporalFreq > 0 || state.deltaTemporalFreq > 0;
+
+  // Zero-SF special mode: when both SF sliders are at 0 and TF is active,
+  // treat the display as a uniform counterphase field (no spatial grating).
+  // The field oscillates between minimum luminance (dark, at t=0) and maximum
+  // luminance (bright, at t=T/2), demonstrating temporal frequency directly.
+  const isZeroSFMode = state.minSpatialFreqCpd < 0.001
+                    && state.deltaSpatialFreqCpd < 0.001
+                    && isTemporalActive;
+
   // Integrated spatial phase: Linear vs Logarithmic chirp
   const isSpatialChirp = state.deltaSpatialFreqCpd > 0.0001;
-  if (!isSpatialChirp) {
+  if (isZeroSFMode) {
+    sinChirp.fill(1.0);  // uniform field — temporal factor drives all contrast
+  } else if (!isSpatialChirp) {
     const twoPiF0 = 2 * Math.PI * fPxMin;
     for (let x = 0; x < gratingPhysW; x++) {
       sinChirp[x] = Math.sin(twoPiF0 * x);
@@ -451,7 +464,6 @@ function renderGrating(tSec) {
   // Temporal counterphase modulation across width
   // Frequencies are partitioned into vertical strips of temporalStripWidth CSS pixels,
   // each snapped to the nearest integer-frames-per-cycle harmonic (R/N).
-  const isTemporalActive = state.minTemporalFreq > 0 || state.deltaTemporalFreq > 0;
   if (!isTemporalActive) {
     temporalFactor.fill(1.0);
   } else {
@@ -482,7 +494,9 @@ function renderGrating(tSec) {
 
       // Snap to nearest integer-frames-per-cycle harmonic (R/N)
       const snapped = snapToFrameHarmonic(nominalTF);
-      const factor = snapped.hz > 0 ? Math.cos(2 * Math.PI * snapped.hz * tSec) : 1.0;
+      const rawFactor = snapped.hz > 0 ? Math.cos(2 * Math.PI * snapped.hz * tSec) : 1.0;
+      // In zero-SF mode: negate so field starts dark (−cos(0) = −1 → minimum luminance)
+      const factor = isZeroSFMode ? -rawFactor : rawFactor;
 
       for (let x = xStart; x < xEnd; x++) {
         temporalFactor[x] = factor;

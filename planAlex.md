@@ -35,3 +35,7 @@ REduce minimum spatial frequency of slider to .03, and change default to .06.
 Change spatial frequency range to 2.0cpd.
 
 Add a drop-down for spatial frequency spacing , linear or logarithmic, and also one for temporal frequency spacing.
+
+== Revision 6 ==
+
+There's something wrong with the highest temporal frequency when it's at least 30 or above it appears to be allowing temporal aliasing because it's more visible than immediately-lower frequencies.
