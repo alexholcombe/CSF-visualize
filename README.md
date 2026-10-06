@@ -10,6 +10,12 @@ Thanks to LLMs, I was able to vibe-code a webpage for these demonstrations, a we
 
 The URL updates dynamically when you change parameters so you can change the settings and then share the URL with others to achieve the same settings.
 
+Unfortunately most of us don't have the bit-depth on our screens to make the low contrast top of the display truly invisible, but nevertheless one gets a sense of the inverted-U contour.
+
+The default settings are pretty good for visualising one's spatial CSF, I think, and [this](https://alexholcombe.github.io/CSF-visualize/?stripHeight=20&maxContrast=1&contrastScale=linear&minSpatialFreqCpd=0&deltaSpatialFreqCpd=0&spatialFreqScale=linear&viewingDistanceCm=57&gratingWidthCm=30&minTemporalFreq=1&deltaTemporalFreq=29&temporalFreqScale=linear&temporalStripWidth=92&temporalOccluderWidth=5&gamma=2.2) is the URL for the settings to visualise temporal contrast sensitivity.
+
+[More details](https://github.com/alexholcombe/CSF-visualize), including the open-source code, here.
+
 I'm using this for my teaching, and hope some of you may also find it useful.
 
 ##
