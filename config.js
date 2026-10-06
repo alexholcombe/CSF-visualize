@@ -12,7 +12,7 @@ const CONFIG = {
   // Display geometry & strip layout
   stripHeight: 20,     // Strip thickness in CSS pixels (1 to 40)
   maxContrast: 1.00,   // Maximum Weber contrast of bottom strip (0.0 to 1.0)
-  contrastScale: 'linear', // 'linear' or 'logarithmic'
+  contrastScale: 'logarithmic', // 'linear' or 'logarithmic'
   minLogContrast: 0.005,   // Floor contrast for log scaling before 0.00 anchor
 
   // Margins for blank grey indicator strips
